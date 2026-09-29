@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lista de Compras | Logos G.3</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<style>
+  body{display:block;align-items:normal;justify-content:normal;padding:32px 20px}
+  .wrap{max-width:640px;margin:0 auto}
+  .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;gap:12px;flex-wrap:wrap}
+  .top h1{font-family:Fraunces,serif;font-size:22px;margin:0}
+  .top .actions{display:flex;gap:8px}
+  .top a, .top button{width:auto;margin:0;padding:8px 16px;background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:8px;cursor:pointer;text-decoration:none;font-size:14px}
+  .top button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+  .lista{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px;margin-bottom:20px}
+  .item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
+  .item:last-child{border-bottom:none}
+  .item input[type=checkbox]{width:18px;height:18px}
+  .item label{flex:1;font-size:14px}
+
+  .novo{display:flex;gap:8px;margin-bottom:20px}
+  .novo input{flex:1;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);font-size:14px}
+  .novo button{padding:9px 16px;border:0;border-radius:8px;background:var(--accent);color:#fff;font-weight:600;cursor:pointer}
+
+  @media print{
+    .top .actions, .novo, .item input[type=checkbox], .item button[data-remover] { display:none !important; }
+    .item.nao-marcado { display:none !important; }
+    body{background:#fff;padding:0}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>Lista de Compras — Logos G.3</h1>
+    <div class="actions">
+      <a href="despesas.html">Despesas</a>
+      <button id="imprimir">Imprimir seleção</button>
+      <button id="sair">Sair</button>
+    </div>
+  </div>
+
+  <div class="novo">
+    <input id="novo-item" placeholder="Adicionar item novo...">
+    <button id="add-item">Adicionar</button>
+  </div>
+
+  <div class="lista" id="lista"></div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="firebase-cfg.js"></script>
+<script src="caixa-common.js"></script>
+<script src="caixa-api.js"></script>
+<script>
+function carregar(){ return api("GET", "compras"); }
+
+function render(){
+  carregar().then(function(lista){
+    var div = document.getElementById("lista");
+    div.innerHTML = "";
+    lista.forEach(function(item){
+      var marcado = Number(item.marcado) === 1;
+      var row = document.createElement("div");
+      row.className = "item" + (marcado ? "" : " nao-marcado");
+      row.innerHTML =
+        "<input type='checkbox' id='it" + item.id + "' data-id='" + item.id + "' " + (marcado ? "checked" : "") + ">" +
+        "<label for='it" + item.id + "'>" + String(item.nome).replace(/</g,"&lt;") + "</label>" +
+        "<button data-remover='" + item.id + "' style='background:none;border:0;color:#DC2626;cursor:pointer;font-size:13px'>remover</button>";
+      div.appendChild(row);
+    });
+    div.querySelectorAll("input[type=checkbox]").forEach(function(cb){
+      cb.addEventListener("change", function(){
+        api("PUT", "compras/" + cb.getAttribute("data-id"), { marcado: cb.checked }).then(render);
+      });
+    });
+    div.querySelectorAll("button[data-remover]").forEach(function(b){
+      b.addEventListener("click", function(){
+        api("DELETE", "compras/" + b.getAttribute("data-remover")).then(render);
+      });
+    });
+  }).catch(function(err){
+    document.getElementById("lista").innerHTML = "<p style='padding:16px;color:#DC2626'>Erro ao carregar do banco: " + err.message + "</p>";
+  });
+}
+
+document.getElementById("add-item").addEventListener("click", function(){
+  var campo = document.getElementById("novo-item");
+  var nome = campo.value.trim();
+  if (!nome) return;
+  api("POST", "compras", { nome: nome }).then(function(){
+    campo.value = "";
+    render();
+  });
+});
+
+document.getElementById("imprimir").addEventListener("click", function(){ window.print(); });
+
+render();
+</script>
+</body>
+</html>

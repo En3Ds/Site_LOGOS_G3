@@ -1,0 +1,14 @@
+name = "logos-g3-caixa-api"
+main = "worker.js"
+compatibility_date = "2026-09-29"
+
+# So intercepta /api/* — o resto do dominio continua indo pro Render normalmente.
+# O registro DNS do dominio no Cloudflare precisa estar "Proxied" (nuvem laranja),
+# nao "DNS only" (nuvem cinza), senao a rota do Worker nao entra em acao.
+[[routes]]
+pattern = "logosg3.com.br/api/*"
+zone_name = "logosg3.com.br"
+
+[[routes]]
+pattern = "www.logosg3.com.br/api/*"
+zone_name = "logosg3.com.br"

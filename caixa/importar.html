@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Importar planilhas | Logos G.3</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<style>
+  body{display:block;align-items:normal;justify-content:normal;padding:32px 20px}
+  .wrap{max-width:640px;margin:0 auto}
+  h1{font-family:Fraunces,serif;font-size:22px;margin:0 0 16px}
+  .caixa{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:16px}
+  .caixa h2{font-size:15px;margin:0 0 6px}
+  .caixa p{margin:0 0 12px;font-size:13px;color:var(--muted)}
+  input[type=file]{font-size:13px}
+  button{padding:9px 16px;border:0;border-radius:8px;background:var(--accent);color:#fff;font-weight:600;cursor:pointer;font-size:14px;margin-top:10px}
+  button:disabled{opacity:.5;cursor:default}
+  .log{white-space:pre-wrap;font-family:monospace;font-size:13px;margin-top:12px;padding:12px;background:var(--paper);border-radius:8px;display:none}
+  a.voltar{font-size:14px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Importar planilhas</h1>
+
+  <div class="caixa">
+    <h2>Despesas mensais</h2>
+    <p>A planilha com uma aba por mês (JANEIRO, FEVEREIRO...), descrição/valor/vencimento em cada linha.</p>
+    <input type="file" id="arq-mensais" accept=".xlsx">
+    <div><button id="btn-mensais" disabled>Importar despesas mensais</button></div>
+    <div class="log" id="log-mensais"></div>
+  </div>
+
+  <div class="caixa">
+    <h2>Despesas Glerton / Claudio</h2>
+    <p>A planilha com as abas "Despesas Glerton" e "Despesas Claudio".</p>
+    <input type="file" id="arq-pessoais" accept=".xlsx">
+    <div><button id="btn-pessoais" disabled>Importar despesas pessoais</button></div>
+    <div class="log" id="log-pessoais"></div>
+  </div>
+
+  <a class="voltar" href="despesas.html">&larr; Voltar pro caixa</a>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="firebase-cfg.js"></script>
+<script src="caixa-common.js"></script>
+<script src="caixa-api.js"></script>
+<script>
+function isoDate(v){
+  if (v instanceof Date) {
+    var m = String(v.getMonth()+1).padStart(2,"0"), d = String(v.getDate()).padStart(2,"0");
+    return v.getFullYear() + "-" + m + "-" + d;
+  }
+  // Algumas planilhas guardam a data como texto ("20/09/2023") em vez de data de
+  // verdade — reconhece esse formato tambem em vez de descartar a data.
+  if (typeof v === "string") {
+    var m2 = v.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if (m2) {
+      var ano = m2[3].length === 2 ? "20" + m2[3] : m2[3];
+      return ano + "-" + m2[2].padStart(2,"0") + "-" + m2[1].padStart(2,"0");
+    }
+  }
+  return null;
+}
+function textoOuNulo(v){ return (v === undefined || v === null || v === "") ? null : String(v); }
+function paraTexto(v){
+  if (v === undefined || v === null) return null;
+  var s = String(v).trim();
+  return s ? s : null;
+}
+function classificaValor(v){
+  if (typeof v === "number") return {tipo:"numero", valor:v};
+  var s = (v === undefined || v === null) ? "" : String(v).trim();
+  if (!s) return {tipo:"vazio"};
+  var limpo = s.replace(/^R\$\s*/i, "").trim();
+  if (/[^0-9.,\s-]/.test(limpo)) return {tipo:"texto"};
+  limpo = limpo.replace(/\s/g, "");
+  if (!limpo) return {tipo:"vazio"};
+  if (/,\d{1,2}$/.test(limpo)) limpo = limpo.replace(/\./g, "").replace(",", ".");
+  else limpo = limpo.replace(/,/g, "");
+  var n = parseFloat(limpo);
+  return isNaN(n) ? {tipo:"texto"} : {tipo:"numero", valor:n};
+}
+
+// --- Despesas mensais: uma aba por mes, colunas A=descricao B=valor C=vencimento ---
+document.getElementById("arq-mensais").addEventListener("change", function(){
+  document.getElementById("btn-mensais").disabled = !this.files[0];
+});
+document.getElementById("btn-mensais").addEventListener("click", function(){
+  var btn = this;
+  var log = document.getElementById("log-mensais");
+  log.style.display = "block"; log.textContent = "Lendo planilha...\n";
+  var arquivo = document.getElementById("arq-mensais").files[0];
+  var leitor = new FileReader();
+  leitor.onload = function(){
+    var wb = XLSX.read(new Uint8Array(leitor.result), {type:"array", cellDates:true});
+    var linhas = [];
+    var ignorados = [];
+    wb.SheetNames.forEach(function(nomeAba){
+      var rows = XLSX.utils.sheet_to_json(wb.Sheets[nomeAba], {header:1, raw:true});
+      rows.forEach(function(row, i){
+        var desc = paraTexto(row[0]);
+        if (!desc) return;
+        var cv = classificaValor(row[1]);
+        if (cv.tipo !== "numero") {
+          if (isoDate(row[2])) ignorados.push(nomeAba + " linha " + (i+1) + ": \"" + desc + "\" sem valor reconhecido, não importado");
+          return;
+        }
+        linhas.push({descricao: desc, valor: cv.valor, vencimento: isoDate(row[2])});
+      });
+    });
+    log.textContent += "Abas encontradas: " + wb.SheetNames.join(", ") + "\n";
+    log.textContent += "Encontrei " + linhas.length + " lançamentos. Importando...\n";
+    if (ignorados.length) log.textContent += ignorados.length + " linha(s) com item mas sem valor reconhecido, NÃO importadas:\n - " + ignorados.join("\n - ") + "\n";
+    btn.disabled = true;
+    api("POST", "despesas/bulk", { rows: linhas }).then(function(resp){
+      log.textContent += "Pronto! " + resp.importadas + " despesas mensais importadas.";
+    }).catch(function(err){
+      log.textContent += "Erro: " + err.message;
+      btn.disabled = false;
+    });
+  };
+  leitor.readAsArrayBuffer(arquivo);
+});
+
+// --- Despesas Glerton/Claudio: abas "Despesas Glerton" / "Despesas Claudio" ---
+document.getElementById("arq-pessoais").addEventListener("change", function(){
+  document.getElementById("btn-pessoais").disabled = !this.files[0];
+});
+document.getElementById("btn-pessoais").addEventListener("click", function(){
+  var btn = this;
+  var log = document.getElementById("log-pessoais");
+  log.style.display = "block"; log.textContent = "Lendo planilha...\n";
+  var arquivo = document.getElementById("arq-pessoais").files[0];
+  var excluir = ["total", "valor abatido dos recebidos", "gastos totais"];
+  var leitor = new FileReader();
+  leitor.onload = function(){
+    var wb = XLSX.read(new Uint8Array(leitor.result), {type:"array", cellDates:true});
+    var linhas = [];
+    var ignorados = [];
+    var abasUsadas = [];
+    var abasIgnoradas = [];
+    wb.SheetNames.forEach(function(nomeAba){
+      var pessoa = null;
+      if (/glerton/i.test(nomeAba)) pessoa = "Glerton";
+      if (/claudio/i.test(nomeAba)) pessoa = "Claudio";
+      if (!pessoa) { abasIgnoradas.push(nomeAba); return; }
+      abasUsadas.push(nomeAba);
+      var rows = XLSX.utils.sheet_to_json(wb.Sheets[nomeAba], {header:1, raw:true});
+      rows.forEach(function(row, i){
+        var item = paraTexto(row[0]);
+        if (!item) return;
+        if (excluir.indexOf(item.toLowerCase()) !== -1) return;
+        var cv = classificaValor(row[1]);
+        if (cv.tipo !== "numero") cv = classificaValor(row[2]);
+        if (cv.tipo !== "numero") {
+          if (isoDate(row[5]) || isoDate(row[6])) ignorados.push(nomeAba + " linha " + (i+1) + ": \"" + item + "\" sem valor reconhecido, não importado");
+          return;
+        }
+        linhas.push({
+          pessoa: pessoa, item: item, valor: cv.valor,
+          forma_pagamento: textoOuNulo(row[2]), parcelado: textoOuNulo(row[3]), quantidade: textoOuNulo(row[4]),
+          data_compra: isoDate(row[5]), vencimento: isoDate(row[6])
+        });
+      });
+    });
+    log.textContent += "Abas usadas: " + (abasUsadas.join(", ") || "nenhuma") + "\n";
+    if (abasIgnoradas.length) log.textContent += "Abas ignoradas (nome não tem \"Glerton\" nem \"Claudio\"): " + abasIgnoradas.join(", ") + "\n";
+    log.textContent += "Encontrei " + linhas.length + " lançamentos. Importando...\n";
+    if (ignorados.length) log.textContent += ignorados.length + " linha(s) com item mas sem valor reconhecido, NÃO importadas:\n - " + ignorados.join("\n - ") + "\n";
+    btn.disabled = true;
+    api("POST", "despesas-pessoais/bulk", { rows: linhas }).then(function(resp){
+      log.textContent += "Pronto! " + resp.importadas + " despesas pessoais importadas.";
+    }).catch(function(err){
+      log.textContent += "Erro: " + err.message;
+      btn.disabled = false;
+    });
+  };
+  leitor.readAsArrayBuffer(arquivo);
+});
+</script>
+</body>
+</html>

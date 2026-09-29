@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Despesas Glerton/Claudio | Logos G.3</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<style>
+  body{display:block;align-items:normal;justify-content:normal;padding:32px 20px}
+  .wrap{max-width:1100px;margin:0 auto}
+  .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;gap:12px;flex-wrap:wrap}
+  .top h1{font-family:Fraunces,serif;font-size:22px;margin:0}
+  .top .actions{display:flex;gap:8px}
+  .top a, .top button{width:auto;margin:0;padding:8px 16px;background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:8px;cursor:pointer;text-decoration:none;font-size:14px}
+
+  .abas{display:flex;gap:8px;margin-bottom:20px}
+  .abas button{padding:8px 16px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--muted);cursor:pointer;font-size:14px}
+  .abas button.ativa{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+  .novo{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:24px}
+  .novo form{display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr 1fr auto;gap:10px;align-items:end}
+  .novo label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+  .novo input,.novo select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);font-size:13px}
+  .novo button{padding:10px 14px;border:0;border-radius:8px;background:var(--accent);color:#fff;font-weight:600;cursor:pointer}
+
+  table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  th{font-size:11px;text-transform:uppercase;color:var(--muted);font-weight:600}
+  tr:last-child td{border-bottom:none}
+  td.valor{text-align:right;font-variant-numeric:tabular-nums}
+  td.acao{text-align:right;white-space:nowrap}
+  td.acao button{background:none;border:0;color:#DC2626;cursor:pointer;font-size:12px}
+  tfoot td{font-weight:700;border-top:2px solid var(--ink)}
+  .vazio{padding:24px;text-align:center;color:var(--muted)}
+
+  @media print{
+    .top .actions, .novo, .abas, td.acao, th:last-child { display:none !important; }
+    body{background:#fff;padding:0}
+    table{border:1px solid #000}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>Despesas Pessoais — Logos G.3</h1>
+    <div class="actions">
+      <a href="despesas.html">Caixa</a>
+      <a href="diagnostico.html">Diagnóstico</a>
+      <button id="imprimir">Imprimir</button>
+      <button id="sair">Sair</button>
+    </div>
+  </div>
+
+  <div class="abas">
+    <button data-pessoa="Glerton" class="ativa">Glerton</button>
+    <button data-pessoa="Claudio">Claudio</button>
+  </div>
+
+  <div class="novo">
+    <form id="form-despesa">
+      <div><label for="item">Item</label><input id="item" required></div>
+      <div><label for="valor">Valor (R$)</label><input id="valor" type="number" step="0.01" min="0" required></div>
+      <div><label for="forma">Forma pagto.</label><input id="forma" placeholder="Pix, Boleto..."></div>
+      <div><label for="parcelado">Parcelado?</label><input id="parcelado" placeholder="Não / 3x..."></div>
+      <div><label for="data_compra">Data compra</label><input id="data_compra" type="date"></div>
+      <div><label for="vencimento">Vencimento</label><input id="vencimento" type="date"></div>
+      <button type="submit" id="btn-salvar">Adicionar</button>
+    </form>
+    <p id="editando-aviso" style="display:none;margin:10px 0 0;font-size:13px;color:var(--muted)">
+      Editando. <a href="#" id="cancelar-edicao">Cancelar</a>
+    </p>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>Item</th><th>Forma</th><th>Parcelado</th><th>Data compra</th><th>Vencimento</th><th class="valor">Valor</th><th></th></tr>
+    </thead>
+    <tbody id="linhas"></tbody>
+    <tfoot>
+      <tr><td colspan="5">Total</td><td class="valor" id="total">R$ 0,00</td><td></td></tr>
+    </tfoot>
+  </table>
+  <p id="vazio" class="vazio" style="display:none">Nenhuma despesa lançada ainda.</p>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="firebase-cfg.js"></script>
+<script src="caixa-common.js"></script>
+<script src="caixa-api.js"></script>
+<script>
+var pessoaAtual = "Glerton";
+var editandoId = null;
+
+function formataReal(v){
+  return "R$ " + Number(v).toLocaleString("pt-BR", {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function formataData(iso){
+  if (!iso) return "";
+  var p = String(iso).split("-");
+  return p.length === 3 ? (p[2] + "/" + p[1] + "/" + p[0]) : iso;
+}
+
+function carregar(){ return api("GET", "despesas-pessoais?pessoa=" + encodeURIComponent(pessoaAtual)); }
+
+function render(){
+  carregar().then(function(lista){
+    var corpo = document.getElementById("linhas");
+    var vazio = document.getElementById("vazio");
+    corpo.innerHTML = "";
+    vazio.style.display = lista.length ? "none" : "block";
+
+    var total = 0;
+    lista.forEach(function(item){
+      total += Number(item.valor);
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td>" + String(item.item).replace(/</g,"&lt;") + "</td>" +
+        "<td>" + String(item.forma_pagamento || "").replace(/</g,"&lt;") + "</td>" +
+        "<td>" + String(item.parcelado || "").replace(/</g,"&lt;") + "</td>" +
+        "<td>" + formataData(item.data_compra) + "</td>" +
+        "<td>" + formataData(item.vencimento) + "</td>" +
+        "<td class='valor'>" + formataReal(item.valor) + "</td>" +
+        "<td class='acao'><button data-editar='" + item.id + "'>editar</button> <button data-id='" + item.id + "'>remover</button></td>";
+      corpo.appendChild(tr);
+    });
+    document.getElementById("total").textContent = formataReal(total);
+
+    corpo.querySelectorAll("button[data-id]").forEach(function(b){
+      b.addEventListener("click", function(){
+        api("DELETE", "despesas-pessoais/" + b.getAttribute("data-id")).then(render);
+      });
+    });
+    corpo.querySelectorAll("button[data-editar]").forEach(function(b){
+      b.addEventListener("click", function(){
+        var item = lista.filter(function(x){ return String(x.id) === b.getAttribute("data-editar"); })[0];
+        if (!item) return;
+        editandoId = item.id;
+        document.getElementById("item").value = item.item;
+        document.getElementById("valor").value = item.valor;
+        document.getElementById("forma").value = item.forma_pagamento || "";
+        document.getElementById("parcelado").value = item.parcelado || "";
+        document.getElementById("data_compra").value = item.data_compra || "";
+        document.getElementById("vencimento").value = item.vencimento || "";
+        document.getElementById("btn-salvar").textContent = "Salvar edição";
+        document.getElementById("editando-aviso").style.display = "block";
+        document.getElementById("item").focus();
+      });
+    });
+  }).catch(function(err){
+    document.getElementById("vazio").style.display = "block";
+    document.getElementById("vazio").textContent = "Erro ao carregar do banco: " + err.message;
+  });
+}
+
+function saiDaEdicao(){
+  editandoId = null;
+  document.getElementById("form-despesa").reset();
+  document.getElementById("btn-salvar").textContent = "Adicionar";
+  document.getElementById("editando-aviso").style.display = "none";
+}
+document.getElementById("cancelar-edicao").addEventListener("click", function(e){ e.preventDefault(); saiDaEdicao(); });
+
+document.getElementById("form-despesa").addEventListener("submit", function(e){
+  e.preventDefault();
+  var item = document.getElementById("item").value;
+  var valor = Number(document.getElementById("valor").value);
+  var forma = document.getElementById("forma").value;
+  var parcelado = document.getElementById("parcelado").value;
+  var data_compra = document.getElementById("data_compra").value;
+  var vencimento = document.getElementById("vencimento").value;
+  var acao = editandoId
+    ? api("PUT", "despesas-pessoais/" + editandoId, { item: item, valor: valor, forma_pagamento: forma, parcelado: parcelado, data_compra: data_compra, vencimento: vencimento })
+    : api("POST", "despesas-pessoais", { pessoa: pessoaAtual, item: item, valor: valor, forma_pagamento: forma, parcelado: parcelado, data_compra: data_compra, vencimento: vencimento });
+  acao.then(function(){ saiDaEdicao(); render(); }).catch(function(err){ alert("Erro ao salvar: " + err.message); });
+});
+
+document.querySelectorAll(".abas button").forEach(function(b){
+  b.addEventListener("click", function(){
+    document.querySelectorAll(".abas button").forEach(function(x){ x.classList.remove("ativa"); });
+    b.classList.add("ativa");
+    pessoaAtual = b.getAttribute("data-pessoa");
+    saiDaEdicao();
+    render();
+  });
+});
+
+document.getElementById("imprimir").addEventListener("click", function(){ window.print(); });
+
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diagnóstico | Logos G.3</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<style>
+  body{display:block;align-items:normal;justify-content:normal;padding:32px 20px}
+  .wrap{max-width:760px;margin:0 auto}
+  h1{font-family:Fraunces,serif;font-size:22px;margin:0 0 16px}
+  h2{font-size:15px;margin:24px 0 8px}
+  pre{white-space:pre-wrap;font-family:monospace;font-size:13px;padding:14px;background:var(--surface);border:1px solid var(--line);border-radius:10px}
+  a.voltar{font-size:14px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Diagnóstico — despesas pessoais</h1>
+  <p>Mostra exatamente o que está gravado no banco agora: total por pessoa e possíveis lançamentos duplicados.</p>
+  <div id="saida"><pre>Consultando...</pre></div>
+  <a class="voltar" href="pessoal.html">&larr; Voltar</a>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="firebase-cfg.js"></script>
+<script src="caixa-common.js"></script>
+<script src="caixa-api.js"></script>
+<script>
+function formataReal(v){
+  return "R$ " + Number(v).toLocaleString("pt-BR", {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+api("GET", "despesas-pessoais").then(function(linhas){
+  var txt = "Total de linhas na tabela: " + linhas.length + "\n\n";
+
+  var porPessoa = {};
+  linhas.forEach(function(l){
+    var p = l.pessoa || "(sem pessoa)";
+    if (!porPessoa[p]) porPessoa[p] = {n:0, soma:0, semValor:0};
+    porPessoa[p].n++;
+    var v = Number(l.valor);
+    if (isNaN(v)) porPessoa[p].semValor++;
+    else porPessoa[p].soma += v;
+  });
+  txt += "=== Por pessoa ===\n";
+  Object.keys(porPessoa).forEach(function(p){
+    var d = porPessoa[p];
+    txt += p + ": " + d.n + " lançamentos, soma " + formataReal(d.soma) + (d.semValor ? " (" + d.semValor + " com valor inválido!)" : "") + "\n";
+  });
+
+  var vistos = {};
+  var duplicados = [];
+  linhas.forEach(function(l){
+    var chave = l.pessoa + "|" + l.item + "|" + l.valor + "|" + l.data_compra;
+    vistos[chave] = (vistos[chave] || 0) + 1;
+  });
+  Object.keys(vistos).forEach(function(chave){
+    if (vistos[chave] > 1) duplicados.push(chave + " → aparece " + vistos[chave] + " vezes");
+  });
+  txt += "\n=== Possíveis duplicados (mesmo item+valor+data repetido) ===\n";
+  txt += duplicados.length ? duplicados.join("\n") : "Nenhum encontrado.";
+
+  var historicos = linhas.filter(function(l){ return /valor dos anos/i.test(l.item || ""); });
+  txt += "\n\n=== Lançamentos \"Valor dos Anos\" (atalho antigo) ===\n";
+  txt += historicos.length
+    ? historicos.map(function(l){ return l.pessoa + ": " + l.item + " = " + formataReal(l.valor) + " (id " + l.id + ")"; }).join("\n")
+    : "Nenhum (bom, já foram removidos ou nunca importados).";
+
+  document.getElementById("saida").innerHTML = "<pre>" + txt.replace(/</g,"&lt;") + "</pre>";
+}).catch(function(err){
+  document.getElementById("saida").innerHTML = "<pre>Erro ao consultar: " + err.message + "</pre>";
+});
+</script>
+</body>
+</html>
